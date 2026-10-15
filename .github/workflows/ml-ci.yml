@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   train-test-deliver:
@@ -44,7 +45,10 @@ jobs:
         run: python -m unittest test_app.py -v
 
       - name: Build Docker image
-        run: docker build -t cardio-risk-ml:${{ github.sha }} .
+        run: |
+          docker build \
+            --label org.opencontainers.image.source=https://github.com/${{ github.repository }} \
+            -t cardio-risk-ml:${{ github.sha }} .
 
       - name: Start Docker container
         run: |
@@ -84,6 +88,74 @@ jobs:
       - name: Stop and remove Docker container
         if: always()
         run: docker rm -f cardio-risk-ml-container || true
+
+      - name: Set GHCR image name
+        run: |
+          OWNER="${{ github.repository_owner }}"
+          echo "IMAGE=ghcr.io/${OWNER,,}/cardio-risk-ml" >> $GITHUB_ENV
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Tag tested image for GHCR
+        run: |
+          docker tag cardio-risk-ml:${{ github.sha }} $IMAGE:v1
+          docker tag cardio-risk-ml:${{ github.sha }} $IMAGE:latest
+
+      - name: Show tagged images
+        run: docker images
+
+      - name: Push v1 tag to GHCR
+        run: docker push $IMAGE:v1
+
+      - name: Push latest tag to GHCR
+        run: docker push $IMAGE:latest
+
+      - name: Remove local copies of the image
+        run: docker rmi $IMAGE:v1 $IMAGE:latest cardio-risk-ml:${{ github.sha }}
+
+      - name: Pull image from GHCR
+        run: docker pull $IMAGE:v1
+
+      - name: Run container from GHCR image
+        run: |
+          docker run -d \
+            --name cardio-risk-ml-ghcr \
+            -p 5000:5000 \
+            $IMAGE:v1
+          docker ps
+
+      - name: Wait for GHCR container to become ready
+        run: |
+          for i in {1..15}; do
+            if curl --fail --silent http://localhost:5000/health; then
+              echo "GHCR container is ready."
+              exit 0
+            fi
+            echo "Waiting for GHCR container... attempt $i"
+            sleep 2
+          done
+          echo "GHCR container did not become ready."
+          docker logs cardio-risk-ml-ghcr
+          exit 1
+
+      - name: Test prediction on GHCR container
+        run: |
+          response=$(curl --fail --silent --show-error \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d '{"age_years":55,"gender":1,"height":165,"weight":80,"ap_hi":140,"ap_lo":90,"cholesterol":2,"gluc":1,"smoke":0,"alco":0,"active":1}' \
+            http://localhost:5000/predict)
+          echo "GHCR prediction response: $response"
+          echo "$response" | grep -q '"prediction"'
+
+      - name: Clean up GHCR container
+        if: always()
+        run: docker rm -f cardio-risk-ml-ghcr || true
+
+      - name: Log out from GHCR
+        if: always()
+        run: docker logout ghcr.io
 
       - name: Prepare release candidate
         run: |

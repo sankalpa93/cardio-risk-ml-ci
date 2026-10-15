@@ -9,3 +9,5 @@ Run locally:
     python train_model.py && python quality_gate.py
     python -m unittest test_ml_pipeline.py test_app.py -v
     python app.py
+
+    Updated for Practical 9

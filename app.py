@@ -27,7 +27,8 @@ def load_model():
 def health_check():
     return jsonify({
         "status": "ok",
-        "service": "cardiovascular-disease-prediction"
+        "service": "cardiovascular-disease-prediction",
+        "version": "v2"
     })
 
 
@@ -57,11 +58,11 @@ def predict():
     probability = float(model.predict_proba(sample)[0][1])
     prediction = "CARDIO_RISK" if prediction_code == 1 else "NO_RISK"
 
-       return jsonify({
-       "status": "ok",
-       "service": "cardiovascular-disease-prediction",
-       "version": "v2"
-   })
+    return jsonify({
+        "prediction": prediction,
+        "prediction_code": prediction_code,
+        "risk_probability": round(probability, 4)
+    })
 
 
 if __name__ == "__main__":

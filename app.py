@@ -6,7 +6,8 @@ from pathlib import Path
 
 import joblib
 import pandas as pd
-from flask import Flask, g, jsonify, request
+from flask import Flask, Response, g, jsonify, request
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,6 +16,27 @@ logging.basicConfig(
     force=True,
 )
 logger = logging.getLogger("cardio-risk-api")
+
+# ---------- Prometheus metrics (defined once, at module level) ----------
+HTTP_REQUESTS = Counter(
+    "cardio_api_http_requests_total",
+    "Total HTTP requests received by the Cardio Risk Prediction API",
+    ["method", "path", "status"],
+)
+HTTP_LATENCY = Histogram(
+    "cardio_api_http_request_duration_seconds",
+    "HTTP request duration in seconds",
+    ["method", "path"],
+)
+PREDICTIONS = Counter(
+    "cardio_api_predictions_total",
+    "Total Cardio Risk prediction attempts",
+    ["result"],
+)
+MODEL_LOADED = Gauge(
+    "cardio_api_model_loaded",
+    "Whether the Cardio Risk model is loaded (1 = loaded, 0 = not loaded)",
+)
 
 app = Flask(__name__)
 
@@ -31,20 +53,23 @@ SAFE_INPUT_FIELDS = set()
 
 def load_model():
     if not MODEL_PATH.exists():
+        MODEL_LOADED.set(0)
         logger.error("event=model_load_failed model_file=%s reason=file_not_found", MODEL_PATH)
         raise FileNotFoundError(
             "cardio_risk_model.pkl was not found. "
             "Run the training pipeline first."
         )
     model = joblib.load(MODEL_PATH)
+    MODEL_LOADED.set(1)
     logger.info("event=model_loaded model_file=%s", MODEL_PATH)
     return model
 
 
-# Try to load the model once at startup so the log shows it (never crash here).
+# Try to load the model once at startup so the gauge and log show it (never crash here).
 try:
     load_model()
 except Exception:
+    MODEL_LOADED.set(0)
     logger.exception("event=startup_model_check_failed")
 
 
@@ -55,14 +80,25 @@ def start_timer():
 
 
 @app.after_request
-def log_request(response):
-    duration_ms = (time.perf_counter() - g.start) * 1000
+def log_and_measure(response):
+    duration = time.perf_counter() - g.start
+
+    # Metrics: do not count Prometheus' own scrapes of /metrics.
+    # Unknown URLs are grouped as "unmatched" to keep labels small and safe.
+    if request.path != "/metrics":
+        route = request.url_rule.rule if request.url_rule else "unmatched"
+        HTTP_REQUESTS.labels(
+            method=request.method, path=route, status=str(response.status_code)
+        ).inc()
+        HTTP_LATENCY.labels(method=request.method, path=route).observe(duration)
+
+    # Practical-11 logging (unchanged)
     level = logging.WARNING if response.status_code >= 400 else logging.INFO
     logger.log(
         level,
         "event=http_request request_id=%s method=%s path=%s status=%s duration_ms=%.2f",
         g.request_id, request.method, request.path,
-        response.status_code, duration_ms,
+        response.status_code, duration * 1000,
     )
     response.headers["X-Request-ID"] = g.request_id
     return response
@@ -85,6 +121,11 @@ def health_check():
 @app.get("/health")
 def health():
     return jsonify({"status": "healthy"})
+
+
+@app.get("/metrics")
+def metrics():
+    return Response(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
 
 
 @app.post("/predict")
@@ -120,6 +161,7 @@ def predict():
         probability = float(model.predict_proba(sample)[0][1])
         prediction = "CARDIO_RISK" if prediction_code == 1 else "NO_RISK"
 
+        PREDICTIONS.labels(result="success").inc()
         logger.info(
             "event=prediction_success request_id=%s prediction=%s",
             g.request_id, prediction,
@@ -132,6 +174,7 @@ def predict():
         })
 
     except Exception:
+        PREDICTIONS.labels(result="error").inc()
         logger.exception("event=prediction_failed request_id=%s", g.request_id)
         return jsonify({"error": "Prediction failed"}), 500
 

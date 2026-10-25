@@ -98,7 +98,9 @@ jobs:
   deploy-kubernetes:
     needs: build-test-push
     runs-on: self-hosted
-
+    defaults:
+        run:
+           shell: powershell
     steps:
       - name: Verify Kubernetes cluster
         shell: bash

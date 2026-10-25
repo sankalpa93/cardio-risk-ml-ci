@@ -101,6 +101,7 @@ jobs:
 
     steps:
       - name: Verify Kubernetes cluster
+        shell: bash
         run: |
           kubectl config current-context
           kubectl get nodes

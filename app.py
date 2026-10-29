@@ -114,7 +114,7 @@ def health_check():
     return jsonify({
         "status": "ok",
         "service": "cardiovascular-disease-prediction",
-        "version": "v2"
+        "version": "v3"
     })
 
 

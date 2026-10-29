@@ -98,15 +98,16 @@ jobs:
   deploy-kubernetes:
     needs: build-test-push
     runs-on: self-hosted
+    defaults:
+      run:
+        shell: cmd
 
     steps:
       - name: Verify Kubernetes cluster
-        run: |
-          kubectl config current-context
-          kubectl get nodes
+        run: kubectl get nodes
 
-      - name: Show current deployment image
-        run: kubectl get deployment cardio-risk-prediction -o jsonpath='{.spec.template.spec.containers[0].image}'
+      - name: Show current deployment
+        run: kubectl get deployment cardio-risk-prediction -o wide
 
       - name: Deploy the tested image
         id: setimage

@@ -114,7 +114,7 @@ jobs:
         run: kubectl set image deployment/cardio-risk-prediction cardio-risk-api=${{ needs.build-test-push.outputs.image_ref }}
 
       - name: Wait for Kubernetes rollout
-        run: kubectl rollout status deployment/cardio-risk-prediction --timeout=180s
+        run: kubectl rollout status deployment/cardio-risk-prediction --timeout=600s
 
       - name: Verify health through the Kubernetes Service
         run: kubectl exec deployment/cardio-risk-prediction -- python -c "import urllib.request; print(urllib.request.urlopen('http://cardio-risk-prediction-service/health', timeout=10).read().decode())"

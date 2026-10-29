@@ -1,0 +1,38 @@
+deploy-kubernetes:
+  needs: build-test-push
+  runs-on: self-hosted
+  timeout-minutes: 20
+
+  defaults:
+    run:
+      shell: bash
+
+  steps:
+    - name: Verify Kubernetes cluster
+      run: kubectl get nodes
+
+    - name: Show current deployment
+      run: kubectl get deployment cardio-risk-prediction -o wide
+
+    - name: Deploy the tested image
+      id: setimage
+      run: kubectl set image deployment/cardio-risk-prediction cardio-risk-api=${{ needs.build-test-push.outputs.image_ref }}
+
+    - name: Wait for Kubernetes rollout
+      run: kubectl rollout status deployment/cardio-risk-prediction --timeout=300s
+
+    - name: Verify health through the Kubernetes Service
+      run: |
+        kubectl exec deployment/cardio-risk-prediction -- \
+          python -c "import urllib.request; print(urllib.request.urlopen('http://cardio-risk-prediction-service/health', timeout=10).read().decode())"
+
+    - name: Show deployed image and Pods
+      run: |
+        kubectl get deployment cardio-risk-prediction -o wide
+        kubectl get pods -o wide
+
+    - name: Roll back if deployment verification fails
+      if: failure() && steps.setimage.conclusion == 'success'
+      run: |
+        kubectl rollout undo deployment/cardio-risk-prediction
+        kubectl rollout status deployment/cardio-risk-prediction --timeout=300s

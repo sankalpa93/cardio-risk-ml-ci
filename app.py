@@ -118,7 +118,7 @@ def health_check():
     })
 
 
-@app.get("/healthz")
+@app.get("/health")
 def health():
     return jsonify({"status": "healthy"})
 

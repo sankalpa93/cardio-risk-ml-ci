@@ -1,0 +1,84 @@
+name: Drift Detection and Retraining
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Type of recent data to simulate"
+        type: choice
+        options:
+          - stable
+          - drift
+        default: stable
+      remove_labels:
+        description: "Delete the labeled batch (simulates: no ground truth yet)"
+        type: choice
+        options:
+          - "no"
+          - "yes"
+        default: "no"
+      min_accuracy:
+        description: "Quality gate - minimum accuracy"
+        type: string
+        default: "0.70"
+
+permissions:
+  contents: read
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Train the current approved model
+        run: python train_model.py
+
+      - name: Prepare reference data
+        run: python drift/prepare_reference.py
+
+      - name: Simulate recent production data
+        run: python drift/simulate_current_data.py --mode ${{ inputs.mode }}
+
+      - name: Detect data drift
+        run: python drift/detect_drift.py
+
+      - name: Remove labels (demo only)
+        if: ${{ inputs.remove_labels == 'yes' }}
+        run: rm -f drift/current_labeled_data.csv
+
+      - name: Retrain candidate model (only if drift)
+        run: python drift/retrain_candidate.py
+
+      - name: Quality gate - approve or reject candidate
+        env:
+          MIN_ACCURACY: ${{ inputs.min_accuracy }}
+        run: python drift/approve_candidate.py
+
+      - name: Post-promotion ML tests
+        run: python -m unittest test_ml_pipeline.py -v
+
+      - name: Post-promotion API tests
+        run: python -m unittest test_app.py -v
+
+      - name: Upload drift evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-evidence-${{ inputs.mode }}
+          path: |
+            drift/*.csv
+            drift/*.json
+            drift/*.pkl
+          if-no-files-found: warn
+          retention-days: 7
